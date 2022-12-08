@@ -94,17 +94,11 @@ NOT_SAMPLED = "0"
 _logger = logging.getLogger(__name__)
 
 
-class AwsParseTraceHeaderError(Exception):
-    def __init__(self, message):
-        super().__init__()
-        self.message = message
-
-
 class AwsXRayPropagator(TextMapPropagator):
     """Propagator for the AWS X-Ray Trace Header propagation protocol.
 
     See:
-    https://docs.aws.amazon.com/xray/latest/devguide/xray-concepts.html#xray-concepts-tracingheader
+    https://docs.aws.amazon.com/xray/latest/devguide/xray-api-segmentdocuments.html
     """
 
     # AWS
@@ -160,116 +154,8 @@ class AwsXRayPropagator(TextMapPropagator):
             trace.NonRecordingSpan(span_context), context=context
         )
 
-    @staticmethod
-    def _extract_span_properties(trace_header):
-        trace_id = trace.INVALID_TRACE_ID
-        span_id = trace.INVALID_SPAN_ID
-        sampled = False
-
-        for kv_pair_str in trace_header.split(KV_PAIR_DELIMITER):
-            try:
-                key_str, value_str = kv_pair_str.split(KEY_AND_VALUE_DELIMITER)
-                key, value = key_str.strip(), value_str.strip()
-            except ValueError as ex:
-                raise AwsParseTraceHeaderError(
-                    (
-                        "Error parsing X-Ray trace header. Invalid key value pair: %s. Returning INVALID span context.",
-                        kv_pair_str,
-                    )
-                ) from ex
-            if key == TRACE_ID_KEY:
-                if not AwsXRayPropagator._validate_trace_id(value):
-                    raise AwsParseTraceHeaderError(
-                        (
-                            "Invalid TraceId in X-Ray trace header: '%s' with value '%s'. Returning INVALID span context.",
-                            TRACE_HEADER_KEY,
-                            trace_header,
-                        )
-                    )
-
-                try:
-                    trace_id = AwsXRayPropagator._parse_trace_id(value)
-                except ValueError as ex:
-                    raise AwsParseTraceHeaderError(
-                        (
-                            "Invalid TraceId in X-Ray trace header: '%s' with value '%s'. Returning INVALID span context.",
-                            TRACE_HEADER_KEY,
-                            trace_header,
-                        )
-                    ) from ex
-            elif key == PARENT_ID_KEY:
-                if not AwsXRayPropagator._validate_span_id(value):
-                    raise AwsParseTraceHeaderError(
-                        (
-                            "Invalid ParentId in X-Ray trace header: '%s' with value '%s'. Returning INVALID span context.",
-                            TRACE_HEADER_KEY,
-                            trace_header,
-                        )
-                    )
-
-                try:
-                    span_id = AwsXRayPropagator._parse_span_id(value)
-                except ValueError as ex:
-                    raise AwsParseTraceHeaderError(
-                        (
-                            "Invalid TraceId in X-Ray trace header: '%s' with value '%s'. Returning INVALID span context.",
-                            TRACE_HEADER_KEY,
-                            trace_header,
-                        )
-                    ) from ex
-            elif key == SAMPLED_FLAG_KEY:
-                if not AwsXRayPropagator._validate_sampled_flag(value):
-                    raise AwsParseTraceHeaderError(
-                        (
-                            "Invalid Sampling flag in X-Ray trace header: '%s' with value '%s'. Returning INVALID span context.",
-                            TRACE_HEADER_KEY,
-                            trace_header,
-                        )
-                    )
-
-                sampled = AwsXRayPropagator._parse_sampled_flag(value)
-
         return trace_id, span_id, sampled
 
-    @staticmethod
-    def _validate_trace_id(trace_id_str):
-        return (
-            len(trace_id_str) == TRACE_ID_LENGTH
-            and trace_id_str.startswith(TRACE_ID_VERSION)
-            and trace_id_str[TRACE_ID_DELIMITER_INDEX_1] == TRACE_ID_DELIMITER
-            and trace_id_str[TRACE_ID_DELIMITER_INDEX_2] == TRACE_ID_DELIMITER
-        )
-
-    @staticmethod
-    def _parse_trace_id(trace_id_str):
-        timestamp_subset = trace_id_str[
-            TRACE_ID_DELIMITER_INDEX_1 + 1 : TRACE_ID_DELIMITER_INDEX_2
-        ]
-        unique_id_subset = trace_id_str[
-            TRACE_ID_DELIMITER_INDEX_2 + 1 : TRACE_ID_LENGTH
-        ]
-        return int(timestamp_subset + unique_id_subset, 16)
-
-    @staticmethod
-    def _validate_span_id(span_id_str):
-        return len(span_id_str) == PARENT_ID_LENGTH
-
-    @staticmethod
-    def _parse_span_id(span_id_str):
-        return int(span_id_str, 16)
-
-    @staticmethod
-    def _validate_sampled_flag(sampled_flag_str):
-        return len(
-            sampled_flag_str
-        ) == SAMPLED_FLAG_LENGTH and sampled_flag_str in (
-            IS_SAMPLED,
-            NOT_SAMPLED,
-        )
-
-    @staticmethod
-    def _parse_sampled_flag(sampled_flag_str):
-        return sampled_flag_str[0] == IS_SAMPLED
 
     def inject(
         self,
@@ -277,6 +163,7 @@ class AwsXRayPropagator(TextMapPropagator):
         context: typing.Optional[Context] = None,
         setter: Setter[CarrierT] = default_setter,
     ) -> None:
+        # TODO: no need to look up the current span, all we need is the context.
         span = trace.get_current_span(context=context)
 
         span_context = span.get_span_context()
